@@ -9,38 +9,18 @@ import android.view.MotionEvent
 import android.view.View
 import com.eee.www.nugasa.R
 import com.eee.www.nugasa.model.FingerMap
-import com.eee.www.nugasa.ui.CanvasView.Constants.ANIM_REPEAT_DELAYED_MILLIS
-import com.eee.www.nugasa.ui.CanvasView.Constants.ANIM_START_DELAYED_MILLIS
-import com.eee.www.nugasa.ui.CanvasView.Constants.MESSAGE_ANIM
-import com.eee.www.nugasa.ui.CanvasView.Constants.MESSAGE_PICK
-import com.eee.www.nugasa.ui.CanvasView.Constants.MESSAGE_PICK_ANIM
-import com.eee.www.nugasa.ui.CanvasView.Constants.MESSAGE_RESET
-import com.eee.www.nugasa.ui.CanvasView.Constants.MESSAGE_SNACKBAR
-import com.eee.www.nugasa.ui.CanvasView.Constants.PICK_ANIM_REPEAT_DELAYED_MILLIS
-import com.eee.www.nugasa.ui.CanvasView.Constants.PICK_DELAYED_MILLIS
-import com.eee.www.nugasa.ui.CanvasView.Constants.RESET_DELAYED_MILLIS
-import com.eee.www.nugasa.ui.CanvasView.Constants.SNACKBAR_DELAYED_MILLIS
-import com.eee.www.nugasa.ui.CanvasView.Constants.SOUND_DELAYED_MILLIS
-import com.eee.www.nugasa.utils.FingerPicker
-import com.eee.www.nugasa.utils.SoundEffector
-import com.eee.www.nugasa.utils.TAG
+import com.eee.www.nugasa.utils.*
 import kotlin.properties.Delegates
 
-class CanvasView : View, Handler.Callback, MediatedView {
-    private object Constants {
-        const val MESSAGE_PICK = 0
-        const val MESSAGE_ANIM = 1
-        const val MESSAGE_PICK_ANIM = 2
-        const val MESSAGE_RESET = 3
-        const val MESSAGE_SNACKBAR = 4
-
-        const val PICK_DELAYED_MILLIS = 3000L
-        const val ANIM_START_DELAYED_MILLIS = 300L
-        const val ANIM_REPEAT_DELAYED_MILLIS = 15L
-        const val PICK_ANIM_REPEAT_DELAYED_MILLIS = 30L
-        const val RESET_DELAYED_MILLIS = 4000L
-        const val SOUND_DELAYED_MILLIS = 1000L
-        const val SNACKBAR_DELAYED_MILLIS = 2000L
+class CanvasView : View, CanvasEventHandler.Callback, MediatedView {
+    private object DelayedMillis {
+        const val PICK = 3000L
+        const val START_ANIM_BEFORE_PICK = 300L
+        const val REPEAT_ANIM_BEFORE_PICK = 15L
+        const val REPEAT_ANIM_AFTER_PICK = 30L
+        const val RESET = 4000L
+        const val SOUND_EFFECT = 1000L
+        const val SNACKBAR = 2000L
     }
 
     override var mediator: Mediator? = null
@@ -49,7 +29,7 @@ class CanvasView : View, Handler.Callback, MediatedView {
 
     val fingerMap = FingerMap()
 
-    private val eventHandler = Handler(Looper.getMainLooper(), this)
+    private val eventHandler = CanvasEventHandler(this)
 
     private var shouldKeepDrawn by Delegates.notNull<Boolean>()
 
@@ -112,7 +92,7 @@ class CanvasView : View, Handler.Callback, MediatedView {
 
     override fun onVisibilityChanged(changedView: View, visibility: Int) {
         super.onVisibilityChanged(changedView, visibility)
-        if (visibility == View.INVISIBLE) {
+        if (visibility == INVISIBLE) {
             stopPressedJobs()
             resetAll()
         }
@@ -142,21 +122,15 @@ class CanvasView : View, Handler.Callback, MediatedView {
     }
 
     private fun stopSnackbar() {
-        if (eventHandler.hasMessages(MESSAGE_SNACKBAR)) {
-            eventHandler.removeMessages(MESSAGE_SNACKBAR)
-        }
+        eventHandler.removeEventIfSent(CanvasEvent.SNACKBAR)
     }
 
     private fun stopSelect() {
-        if (eventHandler.hasMessages(MESSAGE_PICK)) {
-            eventHandler.removeMessages(MESSAGE_PICK)
-        }
+        eventHandler.removeEventIfSent(CanvasEvent.PICK)
     }
 
     private fun stopAnim() {
-        if (eventHandler.hasMessages(MESSAGE_ANIM)) {
-            eventHandler.removeMessages(MESSAGE_ANIM)
-        }
+        eventHandler.removeEventIfSent(CanvasEvent.ANIM_BEFORE_PICK)
     }
 
     private fun triggerPressedJobs() {
@@ -174,19 +148,22 @@ class CanvasView : View, Handler.Callback, MediatedView {
     }
 
     private fun triggerSound() {
-        soundEffector.playTriggerInMillis(SOUND_DELAYED_MILLIS)
+        soundEffector.playTriggerInMillis(DelayedMillis.SOUND_EFFECT)
     }
 
     private fun triggerSelect() {
-        eventHandler.sendEmptyMessageDelayed(MESSAGE_PICK, PICK_DELAYED_MILLIS)
+        eventHandler.sendEventDelayed(CanvasEvent.PICK, DelayedMillis.PICK)
     }
 
     private fun triggerAnim() {
-        eventHandler.sendEmptyMessageDelayed(MESSAGE_ANIM, ANIM_START_DELAYED_MILLIS)
+        eventHandler.sendEventDelayed(
+            CanvasEvent.ANIM_BEFORE_PICK,
+            DelayedMillis.START_ANIM_BEFORE_PICK
+        )
     }
 
     private fun triggerSnackbar() {
-        eventHandler.sendEmptyMessageDelayed(MESSAGE_SNACKBAR, SNACKBAR_DELAYED_MILLIS)
+        eventHandler.sendEventDelayed(CanvasEvent.SNACKBAR, DelayedMillis.SNACKBAR)
     }
 
     private fun movePoint(event: MotionEvent) {
@@ -216,9 +193,9 @@ class CanvasView : View, Handler.Callback, MediatedView {
         }
     }
 
-    override fun handleMessage(msg: Message): Boolean {
-        return when (msg.what) {
-            MESSAGE_PICK -> {
+    override fun handleMessage(event: CanvasEvent) {
+        when (event) {
+            CanvasEvent.PICK -> {
                 doPick(fingerCount)
 
                 playSelectSound()
@@ -229,28 +206,22 @@ class CanvasView : View, Handler.Callback, MediatedView {
                 invalidate()
 
                 doVibrate()
-                true
             }
-            MESSAGE_ANIM -> {
+            CanvasEvent.ANIM_BEFORE_PICK -> {
                 doAnim()
                 invalidate()
-                true
             }
-            MESSAGE_PICK_ANIM -> {
+            CanvasEvent.ANIM_AFTER_PICK -> {
                 doPickAnim()
                 invalidate()
-                true
             }
-            MESSAGE_RESET -> {
+            CanvasEvent.RESET -> {
                 resetAll()
                 invalidate()
-                true
             }
-            MESSAGE_SNACKBAR -> {
+            CanvasEvent.SNACKBAR -> {
                 showMessage()
-                true
             }
-            else -> false
         }
     }
 
@@ -265,10 +236,8 @@ class CanvasView : View, Handler.Callback, MediatedView {
     private fun keepDrawnAwhile() {
         shouldKeepDrawn = true
 
-        if (eventHandler.hasMessages(MESSAGE_RESET)) {
-            eventHandler.removeMessages(MESSAGE_RESET)
-        }
-        eventHandler.sendEmptyMessageDelayed(MESSAGE_RESET, RESET_DELAYED_MILLIS)
+        eventHandler.removeEventIfSent(CanvasEvent.RESET)
+        eventHandler.sendEventDelayed(CanvasEvent.RESET, DelayedMillis.RESET)
     }
 
     private fun doVibrate() {
@@ -281,15 +250,17 @@ class CanvasView : View, Handler.Callback, MediatedView {
     }
 
     private fun doAnim() {
-        if (!eventHandler.hasMessages(MESSAGE_ANIM)) {
-            eventHandler.sendEmptyMessageDelayed(MESSAGE_ANIM, ANIM_REPEAT_DELAYED_MILLIS)
-        }
+        eventHandler.sendEventDelayedIfNotSent(
+            CanvasEvent.ANIM_BEFORE_PICK,
+            DelayedMillis.REPEAT_ANIM_BEFORE_PICK
+        )
     }
 
     private fun doPickAnim() {
-        if (!eventHandler.hasMessages(MESSAGE_PICK_ANIM)) {
-            eventHandler.sendEmptyMessageDelayed(MESSAGE_PICK_ANIM, PICK_ANIM_REPEAT_DELAYED_MILLIS)
-        }
+        eventHandler.sendEventDelayedIfNotSent(
+            CanvasEvent.ANIM_AFTER_PICK,
+            DelayedMillis.REPEAT_ANIM_AFTER_PICK
+        )
     }
 
     private fun showMessage() {
